@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#4c1d95" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Deep Holes</title>
+  <link rel="stylesheet" href="css/style.css?v=13" />
+  <link rel="stylesheet" href="css/theme.css?v=13" />
+</head>
+<body>
+  <!-- MAP SCREEN -->
+  <div id="map-screen" class="screen active">
+    <header class="top-bar">
+      <h1>Deep Holes</h1>
+      <div class="wallet-area">
+        <button id="connect-wallet-btn" class="btn">Connect Wallet</button>
+        <span id="wallet-address" class="hidden"></span>
+        <span id="nft-count" class="badge hidden" title="NFTs found in your wallet"></span>
+        <button id="disconnect-wallet-btn" class="btn btn-secondary btn-small hidden">Log out</button>
+      </div>
+    </header>
+
+    <div id="map-container">
+      <canvas id="map-canvas"></canvas>
+
+      <div id="empty-state" class="empty-state hidden">
+        <h2>No holes yet</h2>
+        <p>Be the first to dig into the earth.</p>
+        <button id="buy-first-hole-btn" class="btn btn-large">Buy Your First Hole</button>
+      </div>
+
+      <!-- Camera hint -->
+      <div class="map-controls">
+        <span>Drag or arrow keys to explore • scroll to go up/down</span>
+      </div>
+    </div>
+
+    <div class="bottom-bar">
+      <span class="hint">Click any hole to enter</span>
+      <button id="buy-hole-btn" class="btn">+ Buy New Hole</button>
+    </div>
+  </div>
+
+  <!-- ROOM SCREEN -->
+  <div id="room-screen" class="screen">
+    <header class="top-bar">
+      <button id="back-to-map-btn" class="btn">← Back to Map</button>
+      <h2 id="room-title">Hole</h2>
+      <div id="room-depth-badge" class="badge">Depth 1</div>
+    </header>
+
+    <div id="room-info">
+      <img id="room-image" src="" alt="Hole image" />
+      <div id="room-details">
+        <p id="room-description"></p>
+        <div id="room-links"></div>
+      </div>
+      <button id="owner-panel-btn" class="btn btn-small hidden">Edit Hole</button>
+    </div>
+
+    <div id="room-container">
+      <canvas id="room-canvas"></canvas>
+    </div>
+
+    <div class="bottom-bar">
+      <span class="hint">Arrows / WASD or click the floor to move</span>
+    </div>
+  </div>
+
+  <!-- BUY MODAL -->
+  <div id="buy-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Buy a New Hole</h2>
+      <p class="modal-desc">Choose how deep you want to start. Each level costs ~$4 equivalent in SOL.</p>
+      
+      <label>Username</label>
+      <input type="text" id="buy-username" maxlength="20" placeholder="Shown under your hole on the map" />
+      <label>Profile picture (optional)</label>
+      <input type="file" id="buy-image" accept="image/*" />
+
+      <label>Your character <small>(roll until you like it - you can only choose it now, while creating the hole)</small></label>
+      <div class="char-box"><canvas id="char-preview" width="170" height="185"></canvas><button type="button" id="char-roll" class="btn btn-small">🎲 Roll again</button></div>
+
+      <label>Hole style (shown on the map)</label>
+      <div id="buy-styles" class="style-grid"></div>
+
+      <div class="depth-selector">
+        <label>Starting Depth: <span id="depth-value">1</span></label>
+        <input type="range" id="depth-slider" min="1" max="50" value="1" />
+        <div class="cost-display">
+          Estimated cost: <strong id="cost-display">$4</strong>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="cancel-buy-btn" class="btn btn-secondary">Cancel</button>
+        <button id="confirm-buy-btn" class="btn">Confirm & Pay (Simulated)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OWNER PANEL MODAL -->
+  <div id="owner-modal" class="modal hidden">
+    <div class="modal-content wide">
+      <h2>Edit Your Hole</h2>
+      
+      <label>Username</label>
+      <input type="text" id="edit-username" maxlength="20" />
+
+      <label>Hole style</label>
+      <div id="edit-styles" class="style-grid"></div>
+
+      <label>Description</label>
+      <textarea id="edit-description" rows="3"></textarea>
+
+      <label>Image URL</label>
+      <input type="text" id="edit-image" placeholder="https://..." />
+
+      <label>…or upload a picture</label>
+      <input type="file" id="edit-image-file" accept="image/*" />
+
+      <label>Links (label|url, one per line)</label>
+      <textarea id="edit-links" rows="2" placeholder="Twitter|https://x.com"></textarea>
+
+      <div class="gallery-editor">
+        <h3>Wall pictures</h3>
+        <p class="modal-desc">Every floor has its own frames: 3 on the left wall and 3 on the right wall. Add a picture by link, upload, or one of your wallet NFTs.</p>
+        <div id="gallery-floors" class="floor-tabs"></div>
+        <div id="gallery-slots"></div>
+      </div>
+
+      <div class="deepen-section">
+        <p>Current Depth: <strong id="edit-current-depth">1</strong></p>
+        <button id="deepen-btn" class="btn">Deepen +1 level (~$4)</button>
+      </div>
+
+      <div class="modal-actions">
+        <button id="cancel-edit-btn" class="btn btn-secondary">Cancel</button>
+        <button id="save-edit-btn" class="btn">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NFT PICKER -->
+  <div id="nft-modal" class="modal hidden">
+    <div class="modal-content wide">
+      <h2>Pick from your wallet</h2>
+      <p id="nft-note" class="modal-desc"></p>
+      <div id="nft-grid" class="nft-grid"></div>
+      <div class="modal-actions">
+        <button id="nft-connect-btn" class="btn hidden">Connect Wallet</button>
+        <button id="nft-close-btn" class="btn btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PICTURE VIEWER (cute frame) -->
+  <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Picture">
+    <div class="lb-wrap">
+      <div class="lb-hang">
+        <svg class="lb-string" viewBox="0 0 160 56" aria-hidden="true">
+          <path d="M80 8 L26 56 M80 8 L134 56" stroke="#d6b98c" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+          <circle cx="80" cy="7" r="6" fill="#94a3b8"/><circle cx="78.5" cy="5.5" r="2" fill="#e2e8f0"/>
+        </svg>
+        <div class="lb-ears" aria-hidden="true"><i></i><i></i></div>
+        <figure class="lb-frame">
+          <div class="lb-mat"><img id="lb-img" alt="" /></div>
+          <figcaption id="lb-caption"></figcaption>
+        </figure>
+      </div>
+      <button id="lb-close" class="lb-close" aria-label="Close picture">✕</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js?v=13"></script>
+</body>
+</html>
