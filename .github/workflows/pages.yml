@@ -1,0 +1,41 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject secrets into js/config.js
+        env:
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+        run: |
+          if [ -z "$HELIUS_API_KEY" ]; then
+            echo "::warning::HELIUS_API_KEY secret is not set - the NFT picker will run in demo mode"
+          else
+            sed -i "s|__HELIUS_API_KEY__|${HELIUS_API_KEY}|" js/config.js
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
