@@ -124,7 +124,7 @@ const THEMES = {
   party:   { root: 64, scale: PENT, bpm: 118, lead: "square", lp: 2400, chords: [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7]], dens: .8, bass: 1, kick: 1 }
 };
 /* ---- your own music files (optional, per place) ---- */
-const MUSIC_DIR = "assets/music/", MUSIC_EXT = ["mp3", "ogg", "wav", "m4a", "aac", "flac"], MUSIC_VERSION = 1;   // bump MUSIC_VERSION after replacing a file to beat the browser cache
+const MUSIC_DIR = "assets/music/", MUSIC_EXT = ["mp3", "ogg", "wav", "m4a", "aac", "flac"], MUSIC_VERSION = 2;   // bump MUSIC_VERSION after replacing a file to beat the browser cache
 export const MUSIC_NAMES = Object.keys(THEMES);
 const trackFiles = {};
 function loadTrack(name) {                      // -> Promise<{ el, node } | null>; tries each extension, null = no file => built-in tune
