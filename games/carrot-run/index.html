@@ -23,11 +23,12 @@ input{font:inherit;padding:8px;border-radius:8px;border:0;width:110px;text-align
 .tb{position:absolute;pointer-events:auto;touch-action:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;background:rgba(255,140,26,.55);border:2px solid rgba(255,255,255,.5);padding:0;margin:0}
 #bj{right:3%;bottom:6%;width:17%;aspect-ratio:1;max-width:120px}
 #bd{right:21%;bottom:6%;width:12%;aspect-ratio:1;max-width:84px;background:rgba(60,160,255,.55);font-size:12px}
+#pz{position:absolute;right:56px;top:8px;padding:4px 10px;font-size:16px;background:rgba(0,0,0,.4)}
 #snd{position:absolute;right:8px;top:8px;padding:4px 10px;font-size:16px;background:rgba(0,0,0,.4)}
 </style></head><body>
 <div id="stage"><canvas id="c" width="960" height="540"></canvas>
 <div id="touch"><div id="joy"><div id="knob"></div></div><button class="tb" id="bd">DASH</button><button class="tb" id="bj">JUMP</button></div>
-<button id="snd" class="alt">🔊</button>
+<button id="pz" class="alt">⏸</button><button id="snd" class="alt">🔊</button>
 <div id="ui"></div></div>
 <script>
 (()=>{'use strict';
@@ -133,7 +134,7 @@ const keys={},joy={x:0,y:0};let joyUp=false;
 const jumpPress=()=>{P.buf=.13;G.inputs++;};
 const dashPress=()=>{if(G.state==='play'&&G.meter>=10&&P.dash<=0){P.dash=1.2;G.meter=0;P.inv=Math.max(P.inv,1.3);sfx('dash');G.inputs++;}};
 addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();
- if(e.repeat)return;keys[k]=1;if(k===' '||k==='arrowup'||k==='w')jumpPress();if(k==='shift'||k==='e'||k==='x')dashPress();audio();});
+ if(e.repeat)return;if(k==='p'||k==='escape'){if(G.state==='play')pause();else if(G.state==='pause')unpause();}keys[k]=1;if(k===' '||k==='arrowup'||k==='w')jumpPress();if(k==='shift'||k==='e'||k==='x')dashPress();audio();});
 addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=0;});
 const jb=$('joy'),jk=$('knob');let jid=null;
 function jmove(e){const r=jb.getBoundingClientRect();let dx=(e.clientX-r.left-r.width/2)/(r.width/2),dy=(e.clientY-r.top-r.height/2)/(r.height/2);const m=Math.hypot(dx,dy);if(m>1){dx/=m;dy/=m;}joy.x=dx;joy.y=dy;jk.style.transform=`translate(${dx*70}%,${dy*70}%)`;
@@ -147,6 +148,7 @@ $('bd').addEventListener('pointerdown',e=>{e.preventDefault();dashPress();});
 if('ontouchstart' in window||matchMedia('(pointer:coarse)').matches)$('touch').style.display='block';
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&G.state==='play')pause();});
 addEventListener('blur',()=>{if(G.state==='play')pause();});
+$('pz').onclick=()=>{if(G.state==='play')pause();};
 $('snd').onclick=()=>{audio();musicOn=sfxOn=!musicOn;$('snd').textContent=musicOn?'🔊':'🔇';};
 function fit(){const s=Math.min(innerWidth/W,innerHeight/H);stage.style.width=W*s+'px';stage.style.height=H*s+'px';}
 addEventListener('resize',fit);fit();
@@ -162,15 +164,17 @@ async function menu(msg){G.state='menu';const b=await bal();
  <div class="msg">${msg||''}</div>
  <div><input id="code" placeholder="test code" autocomplete="off"><button class="alt" data-a="code">Apply</button></div>
  <div class="small">Clearing level ${CFG.refundLevel} refunds your entry fee. Real profit only starts after that and is small (daily cap ${CFG.dailyProfitCap}).<br>
- Keys: ←/→ move · Space/↑ jump (double jump) · ↓ duck / fast-fall · Shift dash (collect 10 golden carrots)<br>Phone: joystick (move, up = jump, down = duck) + JUMP / DASH buttons<br>Land on foxes, crows and bats to stomp them. Spikes, rocks and saws can't be stomped. From level 6 a hound hunts you: bumping into rocks/foxes/crows/bats makes you stumble, two stumbles in a row and you're caught. Spikes, saws, fire and lasers still kill instantly.</div>`);}
+ Keys: ←/→ move · Space/↑ jump (double jump) · ↓ duck / fast-fall · Shift dash (collect 10 golden carrots) · P / Esc / ⏸ pause<br>Phone: joystick (move, up = jump, down = duck) + JUMP / DASH buttons<br>Land on foxes, crows and bats to stomp them. Spikes, rocks and saws can't be stomped. From level 6 a hound hunts you: bumping into rocks/foxes/crows/bats makes you stumble, two stumbles in a row and you're caught. Spikes, saws, fire and lasers still kill instantly.</div>`);}
 ui.addEventListener('click',async e=>{const a=e.target.dataset&&e.target.dataset.a;if(!a)return;audio();
  if(a==='play')startRun();
  else if(a==='code'){const v=($('code').value||'').trim().toLowerCase();if(h53('rb:'+v)===CFG.devHash){G.test=true;menu('TEST MODE on: free entry, nothing is credited to your wallet.');}else menu('Invalid code.');}
  else if(a==='next'){G.level++;startLevel();}
- else if(a==='resume'){G.state='play';hide();}
+ else if(a==='resume')unpause();
+ else if(a==='cashout')menu('Cashed out at level '+G.level+'. Paid out this run: '+G.earned+' 🥕');
  else if(a==='menu')menu();
  else if(a==='revive')doRevive();});
-function pause(){G.state='pause';show('<h1>Paused</h1><button data-a="resume">Resume</button><button class="alt" data-a="menu">Quit run</button>');}
+function pause(){G.state='pause';show(`<h1>Paused</h1><div class="sub">Level ${G.level} · Paid out this run: ${G.earned} 🥕<br>Everything you earned so far is already in your wallet.</div><button data-a="resume">▶ Continue</button><button class="alt" data-a="cashout">Cash out &amp; quit</button>`);}
+function unpause(){G.state='play';hide();P.inv=Math.max(P.inv,1.2);}
 
 /* ================= run / level flow ================= */
 async function startRun(){
@@ -192,9 +196,8 @@ async function clearLevel(){G.state='clear';sfx('win');const L=G.level;
   const pay=refund+profit;if(pay>0){await wallet.award(pay,G.run,{profit:profit,level:L,inputs:G.inputs,ms:Math.round(real*1000)});G.earned+=pay;}
  }
  const best=Math.max(L,+localStorage.getItem('cd_best')||0);localStorage.setItem('cd_best',best);
- show(`<h1>Level ${L} cleared!</h1><div class="sub">${G.boss?'👑 Boss defeated!':''} Score ${G.score|0}</div>
- <div style="font-size:20px">${G.test?'TEST: nothing credited':(refund?'Entry fee refunded +'+refund+' 🥕':'')+(profit?' Profit +'+profit+' 🥕':(!refund&&!txt?'No payout yet — keep going to level '+(CFG.refundLevel+1)+'+':''))}</div>
- <div class="msg">${txt}</div><div class="small">Next: ${WORLDS[L%WORLDS.length][0]} — faster &amp; nastier${(L+1)%CFG.bossEvery===0?' · ⚠ BOSS':''}</div><button data-a="next">Next level ▶</button><button class="alt" data-a="menu">Cash out &amp; quit</button>`);}
+ G.toast={a:'Level '+L+' cleared!'+(G.boss?'  Boss defeated!':''),b:G.test?'TEST: nothing credited':((refund?'Entry fee refunded +'+refund+' carrots':'')+(profit?(refund?'   ':'')+'Profit +'+profit+' carrots':'')),c:txt||((L<=CFG.refundLevel&&!refund&&!G.test)?'Payouts start at level '+CFG.refundLevel:'')};
+ setTimeout(()=>{if(G.state==='clear'){G.level++;startLevel();}},2200);}
 async function die(){if(G.state!=='play')return;G.state='dead';sfx('die');G.shake=.4;boom(P.x,P.y-25,30,'#fff');
  const can=G.level>=CFG.reviveFrom&&!G.revived;
  setTimeout(()=>{if(G.state!=='dead')return;const best=Math.max(G.level,+localStorage.getItem('cd_best')||0);localStorage.setItem('cd_best',best);
@@ -332,6 +335,7 @@ function draw(){const L=G.level,wi=(L-1)%WORLDS.length,w=WORLDS[wi],dark=DARK.ha
   ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(280,34,160,10);ctx.fillStyle=G.meter>=10?'#4cf':'#ffd166';ctx.fillRect(280,34,16*G.meter,10);
   ctx.fillStyle='#fff';ctx.font='12px system-ui';ctx.fillText(G.meter>=10?'DASH READY! (Shift)':'dash',446,43);
   if(G.ban>0&&G.state==='play'){ctx.globalAlpha=Math.min(1,G.ban);ctx.textAlign='center';ctx.shadowColor='#000';ctx.shadowBlur=8;ctx.font='bold 40px system-ui';ctx.fillText(G.boss?'⚔ BOSS FIGHT ⚔':'World: '+w[0],W/2,190);const hnt=HINT[L];if(hnt){ctx.font='bold 20px system-ui';ctx.fillStyle='#ffd166';ctx.fillText(hnt,W/2,225);}ctx.globalAlpha=1;ctx.shadowBlur=0;}}
+ if(G.state==='clear'&&G.toast){ctx.textAlign='center';ctx.shadowColor='#000';ctx.shadowBlur=8;ctx.fillStyle='#fff';ctx.font='bold 44px system-ui';ctx.fillText(G.toast.a,W/2,200);ctx.font='bold 24px system-ui';ctx.fillStyle='#ffd166';ctx.fillText(G.toast.b,W/2,240);ctx.font='18px system-ui';ctx.fillStyle='#fff';ctx.fillText(G.toast.c,W/2,272);ctx.fillText('Next: '+WORLDS[L%WORLDS.length][0]+((L+1)%CFG.bossEvery===0?'  -  BOSS':''),W/2,310);ctx.shadowBlur=0;}
  ctx.restore();}
 
 /* ================= loop ================= */
