@@ -5,13 +5,21 @@
 <!--
 CARROT DASH - single file, no dependencies. Put it on GitHub Pages as index.html.
 
-INTEGRATION (mini-game inside another site/game):
-A) iframe: <iframe src="carrot-dash/index.html"></iframe>
-   Game -> host:  {type:'carrot-dash:ready'}, {type:'carrot-dash:delta', amount, balance}, {type:'carrot-dash:exit'}, {type:'carrot-dash:out-of-carrots'} (balance < entry fee: send the player out so they earn carrots elsewhere)
-   Host -> game:  iframe.contentWindow.postMessage({type:'carrot-dash:balance', balance:N}, '*')
-   (the host owns the real carrot balance; delta is negative for entry fee, positive for rewards/refund)
-B) same page: window.CarrotDash.setBalance(n); window.CarrotDash.onChange=(delta,balance)=>{...}
-Standalone it saves balance/best score in localStorage (starts with 20 carrots).
+INTEGRATION (mini-game inside another site/game) - iframe only
+The game NEVER decides amounts. It sends requests; YOUR SERVER debits/credits and answers.
+ Game -> host: postMessage({type:'carrot-dash:req', id, op, run, tk, ...}, hostOrigin)
+   op 'enter'  : player pays the entry fee (10). Reply with run (new run id) and tk (signed ticket)
+   op 'clear'  : {level, secs, got} -> server verifies, then pays reward(level) from ITS OWN table
+   op 'revive' : {level}            -> server charges the extra-life price (level>=15, once per run)
+   op 'end'    : {level, cleared}   -> server closes the run
+   also: {type:'carrot-dash:ready'}, {type:'carrot-dash:exit'}, {type:'carrot-dash:out-of-carrots'}
+ Host -> game: postMessage({type:'carrot-dash:res', id, ok, balance, run?, tk?, reward?}, '*')
+   and {type:'carrot-dash:balance', balance} whenever the balance changes elsewhere.
+ SERVER MUST (client code can always be edited): allow one open run per user; accept 'clear' only in order
+   (1,2,3...); reject if secs < 0.8*(target-3) with target=min(4+L,26) (boss levels: 10+2*(L/15|0));
+   enforce a daily cap + rate limit; never trust any amount/balance sent by the client.
+ Fill HOST_ORIGINS below so only your site can talk to the game.
+Standalone (GitHub Pages test): local wallet in localStorage (20 carrots to start) - testing only, no real value.
 -->
 <style>
 html,body{margin:0;height:100%;background:#0b0e14;color:#fff;font-family:system-ui,Arial,sans-serif;overflow:hidden;touch-action:none;user-select:none}
@@ -36,13 +44,29 @@ const W=480,H=640,FEE=10,cv=document.getElementById('c'),ctx=cv.getContext('2d')
 cv.width=W;cv.height=H;ctx.textAlign='center';ctx.textBaseline='middle';
 const embedded=window.parent!==window;
 const store={get:(k,d)=>{try{const v=localStorage.getItem(k);return v==null?d:+v}catch(e){return d}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
-let bal=embedded?0:store.get('cd_bal',20);
-const API=window.CarrotDash={onChange:null,getBalance:()=>bal,setBalance(n){bal=+n||0;if(!embedded)store.set('cd_bal',bal);cur&&cur()}};
-function change(d){bal+=d;if(!embedded)store.set('cd_bal',bal);
- if(embedded)parent.postMessage({type:'carrot-dash:delta',amount:d,balance:bal},'*');
- if(API.onChange)API.onChange(d,bal)}
-addEventListener('message',e=>{const m=e.data;if(m&&m.type==='carrot-dash:balance'){bal=+m.balance||0;cur&&cur()}});
-if(embedded)parent.postMessage({type:'carrot-dash:ready'},'*');
+const HOST_ORIGINS=[]; // e.g. ['https://your-site.com'] - REQUIRED for the iframe integration
+const tgt=HOST_ORIGINS[0]||'*',SALT='cd1',hooks={};
+const hh=s=>{let a=0xdeadbeef,b=0x41c6ce57;for(let i=0;i<s.length;i++){const c=s.charCodeAt(i);a=Math.imul(a^c,2654435761);b=Math.imul(b^c,1597334677)}a=Math.imul(a^a>>>16,2246822507)^Math.imul(b^b>>>13,3266489909);b=Math.imul(b^b>>>16,2246822507)^Math.imul(a^a>>>13,3266489909);return(4294967296*(2097151&b)+(a>>>0)).toString(36)};
+const REWARD_EARLY=[1,1,1,1,2,2,2]; // levels 1-7 return exactly the 10-carrot entry fee, nothing more
+const reward=L=>L%15===0?15+5*((L/15|0)-1):L<=7?REWARD_EARLY[L-1]:Math.min(5,1+((L-8)>>1));
+const reviveCost=L=>20+Math.min(20,L-15);
+let bal=0;
+if(!embedded){try{const v=(localStorage.getItem('cd_bal')||'').split(':');bal=v[1]&&hh(v[0]+SALT)===v[1]?+v[0]:20}catch(e){bal=20}}
+const sbal=()=>{try{localStorage.setItem('cd_bal',bal+':'+hh(bal+SALT))}catch(e){}};
+window.CarrotDash=Object.freeze({on(ev,fn){hooks[ev]=fn}});
+function local(op,d){
+ if(op==='enter'){if(!dev){if(bal<FEE)return{ok:false};bal-=FEE;sbal()}return{ok:true,balance:bal,run:'local'}}
+ if(op==='clear'){const R=dev?0:reward(d.level);bal+=R;sbal();return{ok:true,balance:bal,reward:R}}
+ if(op==='revive'){const c=dev?0:reviveCost(d.level);if(bal<c)return{ok:false};bal-=c;sbal();return{ok:true,balance:bal}}
+ return{ok:true,balance:bal}}
+const pend={};let rid=0;
+function rpc(op,d){if(!embedded)return Promise.resolve(local(op,d));
+ return new Promise(res=>{const id=++rid,o={type:'carrot-dash:req',id,op,...d};if(op!=='enter'&&g){o.run=g.run;o.tk=g.tk}
+  pend[id]=res;parent.postMessage(o,tgt);setTimeout(()=>{if(pend[id]){delete pend[id];res({ok:false})}},8000)})}
+addEventListener('message',e=>{if(e.source!==parent||(HOST_ORIGINS.length&&!HOST_ORIGINS.includes(e.origin)))return;const m=e.data;if(!m||typeof m!=='object')return;
+ if(m.type==='carrot-dash:res'&&pend[m.id]){const f=pend[m.id];delete pend[m.id];if(typeof m.balance==='number')bal=m.balance;f(m)}
+ else if(m.type==='carrot-dash:balance'&&typeof m.balance==='number'){bal=m.balance;cur&&cur()}});
+if(embedded)parent.postMessage({type:'carrot-dash:ready'},tgt);
 
 const WORLDS=[
  {n:'Sunny Meadow',bg:'#2f6b2f',dot:'#3b8a3b',en:['fox','bounce']},
@@ -60,16 +84,20 @@ const WORLDS=[
  {n:'Candy Land',bg:'#d77ab0',dot:'#f4a9d2',en:['spin','bounce','fox']},
  {n:'Blood Moon',bg:'#2a0a14',dot:'#511426',en:['wolf','ghost','hawk'],dark:1},
  {n:'Void Realm',bg:'#06061a',dot:'#1d1d55',en:['spin','meteor','turret','bat'],dark:1}];
-const DEV_CODE='rahal'; // remove or change before the public launch
-const REFUND_L1=0; // carrots refunded if you die before clearing level 1 (0 = nothing)
+const DEV_HASH='2biy4c23qzo'; // hash of the dev code (standalone testing only, never works inside the iframe) - set your own or delete
+
 const dots=Array.from({length:70},()=>[Math.random()*W,Math.random()*H,2+Math.random()*3]);
-let dev=store.get('cd_dev',0),sl=store.get('cd_sl',1),AC=null,mute=store.get('cd_mute',0);
+let dev=embedded?0:store.get('cd_dev',0),sl=store.get('cd_sl',1),AC=null,mute=store.get('cd_mute',0);
 const keys={};let ptr=null,st='menu',g=null,cur=null,last=0,parts=[],shake=0;
 addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;ac();keys[e.code]=1;if(e.code==='KeyM')$('mute').click();if(e.code==='Space'){dash();e.preventDefault()}if(e.code.startsWith('Arrow'))e.preventDefault()});addEventListener('pointerdown',()=>ac());
 addEventListener('keyup',e=>keys[e.code]=0);
-const pp=e=>{const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height-(e.pointerType==='touch'?45:0)}};
-cv.addEventListener('pointerdown',e=>{ptr=pp(e)});cv.addEventListener('pointermove',e=>{if(ptr)ptr=pp(e)});
-addEventListener('pointerup',()=>ptr=null);
+const pr=e=>{const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}};
+let joy=null; // touch = floating virtual joystick, mouse = follow the cursor
+cv.addEventListener('pointerdown',e=>{const q=pr(e);if(e.pointerType==='touch'){if(!joy)joy={id:e.pointerId,ox:q.x,oy:q.y,x:q.x,y:q.y}}else ptr=q});
+cv.addEventListener('pointermove',e=>{const q=pr(e);if(joy&&joy.id===e.pointerId){joy.x=q.x;joy.y=q.y}else if(ptr)ptr=q});
+addEventListener('pointerup',e=>{if(joy&&joy.id===e.pointerId)joy=null;else if(e.pointerType!=='touch')ptr=null});
+addEventListener('pointercancel',e=>{if(joy&&joy.id===e.pointerId)joy=null});
+addEventListener('contextmenu',e=>e.preventDefault());
 $('dashbtn').addEventListener('pointerdown',e=>{e.stopPropagation();dash()});
 function ac(){if(!AC){try{AC=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(AC&&AC.state==='suspended')AC.resume();return AC}
 function tone(f,d,ty='square',v=.05,sl2=0,dl=0){if(mute)return;const a=ac();if(!a)return;const o=a.createOscillator(),gn=a.createGain(),t=a.currentTime+dl;o.type=ty;o.frequency.setValueAtTime(f,t);if(sl2)o.frequency.exponentialRampToValueAtTime(Math.max(20,f*sl2),t+d);gn.gain.setValueAtTime(v,t);gn.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(gn);gn.connect(a.destination);o.start(t);o.stop(t+d)}
@@ -80,28 +108,29 @@ const mb=$('mute');mb.textContent=mute?'🔇':'🔊';mb.onclick=()=>{mute^=1;sto
 let ms=0;
 function mus(){let dly=260;if(st==='play'&&g&&!g.cl){const sc=[0,3,5,7,10],root=[110,98,123,131,104,87,117,92,98,139,147,124,110,82,73][(g.L-1)%15],n=sc[(ms*3+(ms>>2))%5];if(ms%2===0)tone(root*Math.pow(2,n/12),.14,'triangle',.05);if(ms%4===0)tone(root,.22,'sine',.07);ms++;dly=Math.max(105,200-g.L*4)}setTimeout(mus,dly)}
 function broke(){return !dev&&bal<FEE?`<div class=stat style="border:1px solid #e55">Out of carrots!<br>Earn <b>${FEE} 🥕</b> in other ways, then come back.</div><button id=lv class=alt>${embedded?'Leave the game':'OK'}</button>`:''}
-function codeUI(){return dev?`<div class=stat style="border:1px solid #ff8a1f">🛠 TEST MODE · free entry, no carrots won<br>Start at level <input id=sl type=number min=1 max=99 value=${sl} style="width:60px"> <button id=off class=alt style="font-size:13px;padding:6px 12px">Exit</button></div>`:`<div><input id=code placeholder="Enter code" autocomplete=off style="width:130px"> <button id=ap class=alt style="font-size:14px;padding:8px 14px">Apply</button></div>`}
-function bindCode(){const a=$('ap');if(a)a.onclick=()=>{if($('code').value.trim().toLowerCase()===DEV_CODE){dev=1;store.set('cd_dev',1);cur()}else{$('code').value='';$('code').placeholder='Wrong code'}};
+function codeUI(){return embedded?'':dev?`<div class=stat style="border:1px solid #ff8a1f">🛠 TEST MODE · free entry, no carrots won<br>Start at level <input id=sl type=number min=1 max=99 value=${sl} style="width:60px"> <button id=off class=alt style="font-size:13px;padding:6px 12px">Exit</button></div>`:`<div><input id=code placeholder="Enter code" autocomplete=off style="width:130px"> <button id=ap class=alt style="font-size:14px;padding:8px 14px">Apply</button></div>`}
+function bindCode(){const a=$('ap');if(a)a.onclick=()=>{if(!embedded&&hh($('code').value.trim().toLowerCase()+SALT)===DEV_HASH){dev=1;store.set('cd_dev',1);cur()}else{$('code').value='';$('code').placeholder='Wrong code'}};
  const o=$('off');if(o)o.onclick=()=>{dev=0;store.set('cd_dev',0);cur()};
- const lv=$('lv');if(lv)lv.onclick=()=>{if(embedded)parent.postMessage({type:'carrot-dash:exit',reason:'no-carrots'},'*');else if(API.onNeedCarrots)API.onNeedCarrots()}}
+ const lv=$('lv');if(lv)lv.onclick=()=>{if(embedded)parent.postMessage({type:'carrot-dash:exit',reason:'no-carrots'},tgt);else if(hooks.needcarrots)hooks.needcarrots()}}
 
 const show=h=>{$('ui').innerHTML=h;$('ui').style.display='flex'},hide=()=>$('ui').style.display='none';
 function menu(){st='menu';cur=menu;
  show(`<h1>🐇 CARROT DASH</h1><p style="margin:0">Endless levels. One life. No mercy.</p>
  <div class=stat>Your carrots: <b>${bal} 🥕</b><br>Entry fee: <b>${FEE} 🥕</b><br>Best level: <b>${store.get('cd_best',0)}</b> · High score: <b>${store.get('cd_hi',0)}</b></div>
  ${broke()}<button id=go ${dev||bal>=FEE?'':'hidden'}>${dev?'START · FREE (test)':bal<FEE?'Need '+FEE+' 🥕':'ENTER · −'+FEE+' 🥕'}</button>
- ${codeUI()}<small>Move: WASD / arrows / drag. DASH: Space or button (short invincible burst).<br>Collect the carrots before they rot to clear a level and win carrot points. Fall on level 1 and you only get ${REFUND_L1} 🥕 back. Out of carrots? Earn more elsewhere, then return.</small>`);
+ ${codeUI()}<small>Move: WASD / arrows / drag. DASH: Space or button (short invincible burst).<br>Collect the carrots before they rot to clear a level. Levels 1-7 only pay your entry fee back; real profit starts at level 8. From level 15 you can buy one extra life per run. Out of carrots? Earn more elsewhere, then return.</small>`);
  $('go').onclick=start;bindCode()}
-function over(){st='over';cur=over;if(embedded&&!dev&&bal<FEE)parent.postMessage({type:'carrot-dash:out-of-carrots'},'*');
- show(`<h1>💀 CAUGHT!</h1><div class=stat>Level reached: <b>${g.L}</b><br>Score: <b>${g.score}</b>${g.nb?' · NEW BEST!':''}<br>Carrots won: <b>${dev?'— (test)':'+'+g.earned}</b>${g.ref?'<br>Refund: <b>+'+g.ref+' 🥕</b>':''}<br>Balance: <b>${bal} 🥕</b></div>
+function over(){st='over';cur=over;if(embedded&&!dev&&bal<FEE)parent.postMessage({type:'carrot-dash:out-of-carrots'},tgt);
+ show(`<h1>💀 CAUGHT!</h1><div class=stat>Level reached: <b>${g.L}</b><br>Score: <b>${g.score}</b>${g.nb?' · NEW BEST!':''}<br>Carrots won: <b>${dev?'— (test)':'+'+g.earned}</b>${g.bad?'<br><b>Run rejected by the server.</b>':''}<br>Balance: <b>${bal} 🥕</b></div>
  ${broke()}<button id=go ${dev||bal>=FEE?'':'hidden'}>${dev?'TRY AGAIN · FREE (test)':bal<FEE?'Need '+FEE+' 🥕':'TRY AGAIN · −'+FEE+' 🥕'}</button>
  <button id=mn class=alt>${embedded?'Back to room':'Menu'}</button>`);
- $('go').onclick=start;bindCode();$('mn').onclick=()=>embedded?parent.postMessage({type:'carrot-dash:exit'},'*'):menu()}
+ $('go').onclick=start;bindCode();$('mn').onclick=()=>embedded?parent.postMessage({type:'carrot-dash:exit'},tgt):menu()}
 
-function start(){if(!dev&&bal<FEE)return;const s=$('sl');if(s)sl=Math.max(1,Math.min(99,+s.value||1));store.set('cd_sl',sl);if(!dev)change(-FEE);hide();ac();sfx('start');
- g={L:0,cleared:0,score:0,earned:0,combo:0,lp:-9,t:0,ref:0,nb:0};level(dev?sl:1);st='play'}
+function start(){const s=$('sl');if(s)sl=Math.max(1,Math.min(99,+s.value||1));store.set('cd_sl',sl);if(!dev&&bal<FEE)return;const b=$('go');if(b)b.disabled=true;
+ rpc('enter',{}).then(x=>{if(!x.ok){if(b){b.disabled=false;b.textContent='Entry refused - try again'}return}
+  hide();ac();sfx('start');g={L:0,cleared:0,score:0,earned:0,combo:0,lp:-9,t:0,nb:0,run:x.run,tk:x.tk,rev:0,bad:0,pend:0};level(dev?sl:1);st='play'})}
 function level(L){const w=WORLDS[(L-1)%WORLDS.length],k=Math.max(1,Math.ceil(L/4)-(w.en.length>2?1:0));
- Object.assign(g,{L,w,sp:Math.min(1+.05*(L-1),2.2),target:L%15===0?10+2*(L/15|0):Math.min(4+L,26),boss:L%15===0,itemDone:0,item:null,slow:0,got:0,carrots:[],en:[],grace:1.3,spawn:0,cl:0,
+ Object.assign(g,{t0:g.t,L,w,sp:Math.min(1+.04*(L-1),1.8),target:L%15===0?10+2*(L/15|0):Math.min(4+L,26),boss:L%15===0,itemDone:0,item:null,slow:0,got:0,carrots:[],en:[],grace:1.3,spawn:0,cl:0,
   r:{x:W/2,y:H*.78,vx:0,vy:0,dash:0,cd:0,fx:0,fy:-1,sh:(g.r&&g.r.sh)||0,mag:0,inv:0}});
  const C={bounce:k+1,beam:Math.min(k,3),ghost:Math.min(k,3),meteor:Math.min(k+1,5),bat:Math.min(k,4),snake:Math.min(k,3),boss:1,spin:Math.min(Math.ceil(k/2),3),turret:Math.min(Math.ceil(k/2),3)};
  (g.boss?['boss','spin']:w.en).forEach(t=>{const n=C[t]||Math.min(k,5);for(let i=0;i<n;i++)g.en.push(mk(t))})}
@@ -122,19 +151,28 @@ function mk(t){const[x,y]=far(),sp=g.sp;
 function shoot(x,y,a,v){g.en.push({t:'bullet',x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,r:6})}
 function dash(){if(st!=='play'||!g||g.r.cd>0||g.grace>0)return;g.r.dash=.18;g.r.cd=1.5;sfx('dash');burst(g.r.x,g.r.y,'#ffd27a',8)}
 function burst(x,y,c,n){for(let i=0;i<n;i++){const a=Math.random()*6.28,s=40+Math.random()*140;parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,l:.5,c})}}
-function die(){if(st!=='play')return;if(g.r.sh){g.r.sh=0;g.r.inv=1;sfx('boom');burst(g.r.x,g.r.y,'#7df',20);return}st='dying';shake=.45;burst(g.r.x,g.r.y,'#ff5050',28);
- sfx('die');if(!dev&&!g.cleared&&REFUND_L1>0){change(REFUND_L1);g.ref=REFUND_L1}
- if(!dev&&g.score>store.get('cd_hi',0)){g.nb=1;store.set('cd_hi',g.score)}
- if(!dev&&g.L>store.get('cd_best',0))store.set('cd_best',g.L);setTimeout(over,850)}
+function die(){if(st!=='play')return;if(g.r.sh){g.r.sh=0;g.r.inv=1;sfx('boom');burst(g.r.x,g.r.y,'#7df',20);return}
+ st='dying';shake=.45;burst(g.r.x,g.r.y,'#ff5050',28);sfx('die');const rv=g.L>=15&&!g.rev;setTimeout(rv?askRevive:finish,rv?650:850)}
+function askRevive(){cur=askRevive;const c=reviveCost(g.L),can=dev||bal>=c;
+ show(`<h1>💀 CAUGHT!</h1><div class=stat>Level <b>${g.L}</b> · ${g.got}/${g.target} 🥕 collected<br>Extra life (one per run): <b>${dev?'FREE (test)':c+' 🥕'}</b><br>Balance: <b>${bal} 🥕</b></div>
+ <button id=rv ${can?'':'disabled'}>${can?'REVIVE'+(dev?'':' · −'+c+' 🥕'):'Need '+c+' 🥕'}</button><button id=gu class=alt>Give up</button>`);
+ $('rv').onclick=()=>{$('rv').disabled=true;rpc('revive',{level:g.L}).then(x=>{if(!x.ok){finish();return}g.rev=1;hide();revive()})};$('gu').onclick=finish}
+function revive(){const r=g.r;r.x=W/2;r.y=H*.78;r.vx=r.vy=0;r.inv=2.5;g.grace=1;sfx('item');g.en=g.en.filter(e=>e.t!=='bullet');
+ for(const e of g.en){if(e.t==='hawk'){e.st=0;e.tm=1.2}else if(e.t==='beam'||e.t==='meteor'){e.s=0;e.f=0;e.tm=-1.2}
+  else if(Math.hypot(e.x-r.x,e.y-r.y)<170&&!['boss','spin','turret','snake'].includes(e.t)){const[x,y]=far();e.x=x;e.y=y}}
+ st='play'}
+function finish(){if(!dev&&g.score>store.get('cd_hi',0)){g.nb=1;store.set('cd_hi',g.score)}
+ if(!dev&&g.L>store.get('cd_best',0))store.set('cd_best',g.L);if(embedded)rpc('end',{level:g.L,cleared:g.cleared});over()}
 
 function update(dt){const r=g.r;g.t+=dt;
- if(g.cl>0){g.cl-=dt;if(g.cl<=0)level(g.L+1);return}
+ if(g.cl>0||g.pend){g.cl-=dt;if(g.cl<=0&&!g.pend)level(g.L+1);return}
  let ax=(keys.ArrowRight||keys.KeyD?1:0)-(keys.ArrowLeft||keys.KeyA?1:0),ay=(keys.ArrowDown||keys.KeyS?1:0)-(keys.ArrowUp||keys.KeyW?1:0);
- if(!ax&&!ay&&ptr){const dx=ptr.x-r.x,dy=ptr.y-r.y,d=Math.hypot(dx,dy);if(d>6){ax=dx/d;ay=dy/d}}
+ if(!ax&&!ay&&joy){const dx=joy.x-joy.ox,dy=joy.y-joy.oy,d=Math.hypot(dx,dy);if(d>8){const m=Math.min(1,d/60);ax=dx/d*m;ay=dy/d*m}}
+ else if(!ax&&!ay&&ptr){const dx=ptr.x-r.x,dy=ptr.y-r.y,d=Math.hypot(dx,dy);if(d>6){ax=dx/d;ay=dy/d}}
  else{const m=Math.hypot(ax,ay);if(m){ax/=m;ay/=m}}
  if(ax||ay){r.fx=ax;r.fy=ay}
  if(r.dash>0&&!ax&&!ay){ax=r.fx;ay=r.fy}
- const sp=r.dash>0?640:190,ac=r.dash>0?40:(g.w.ice?3:14);
+ const sp=r.dash>0?700:235,ac=r.dash>0?40:(g.w.ice?4:14);
  r.vx+=(ax*sp-r.vx)*Math.min(1,dt*ac);r.vy+=(ay*sp-r.vy)*Math.min(1,dt*ac);
  r.x=Math.max(12,Math.min(W-12,r.x+r.vx*dt));r.y=Math.max(50,Math.min(H-12,r.y+r.vy*dt));
  r.dash-=dt;r.cd-=dt;
@@ -146,7 +184,8 @@ function update(dt){const r=g.r;g.t+=dt;
   if(c.l<=0){g.carrots.splice(i,1);g.combo=0;sfx('rot');continue}
   if(Math.hypot(c.x-r.x,c.y-r.y)<21){g.carrots.splice(i,1);g.got++;
    g.combo=g.t-g.lp<3?Math.min(g.combo+1,5):1;g.lp=g.t;g.score+=10*g.combo;burst(c.x,c.y,'#ff9b3d',12);sfx('pick',g.combo);if(g.L>=10&&!g.itemDone&&g.got>=Math.ceil(g.target/2)){g.itemDone=1;if(g.boss||Math.random()<.5)g.item={x:60+Math.random()*(W-120),y:100+Math.random()*(H-160),k:g.boss?'shield':['shield','mag','slow'][Math.random()*3|0],l:9}}
-   if(g.got>=g.target){const R=g.boss?100+40*((g.L/15|0)-1):12+3*(g.L-1);if(!dev)change(R);g.earned+=dev?0:R;sfx('clear');g.cleared++;g.score+=50;g.cl=1.7;g.en.length=0;g.carrots.length=0;g.rw=R;return}}}
+   if(g.got>=g.target){sfx('clear');g.cleared++;g.score+=50;g.cl=1.7;g.en.length=0;g.carrots.length=0;g.pend=1;g.rw=0;
+   rpc('clear',{level:g.L,secs:+(g.t-g.t0).toFixed(1),got:g.got}).then(x=>{g.pend=0;if(x.ok){g.rw=x.reward||0;g.earned+=g.rw}else{g.bad=1;finish()}});return}}}
  if(g.item){const it=g.item;it.l-=dt;if(it.l<=0)g.item=null;else if(Math.hypot(it.x-r.x,it.y-r.y)<24){if(it.k==='shield')r.sh=1;else if(it.k==='mag')r.mag=7;else g.slow=5;g.item=null;sfx('item');burst(r.x,r.y,'#7df',16)}}
  if(r.mag>0){r.mag-=dt;for(const c of g.carrots){c.x+=(r.x-c.x)*Math.min(1,dt*2.5);c.y+=(r.y-c.y)*Math.min(1,dt*2.5)}}
  r.inv-=dt;
@@ -212,7 +251,8 @@ function draw(){ctx.save();
   if(r.mag>0||g.slow>0){ctx.font='14px system-ui';ctx.fillStyle='#fff';ctx.fillText((r.mag>0?'🧲 '+(r.mag|0)+'s  ':'')+(g.slow>0?'⏳ '+(g.slow|0)+'s':''),W/2,H-14)}
   ctx.fillStyle='#ffb347';ctx.fillRect(W/2-40,32,80*Math.max(0,1-Math.max(0,r.cd)/1.5),4);
   if(g.grace>0&&!g.cl){ctx.font='bold 26px system-ui';ctx.fillStyle='#fff';ctx.fillText(`${g.boss?'⚠ BOSS · ':''}Level ${g.L} · ${g.w.n}`,W/2,H/2-60);ctx.font='16px system-ui';ctx.fillText('Get ready…',W/2,H/2-30)}
-  if(g.cl>0){ctx.font='bold 34px system-ui';ctx.fillStyle='#fff';ctx.fillText('LEVEL CLEAR!',W/2,H/2-20);ctx.fillStyle='#ffb347';ctx.fillText(dev?'(test mode)':`+${g.rw} 🥕`,W/2,H/2+25)}}
+  if(g.cl>0||g.pend){ctx.font='bold 34px system-ui';ctx.fillStyle='#fff';ctx.fillText('LEVEL CLEAR!',W/2,H/2-20);ctx.fillStyle='#ffb347';ctx.fillText(g.pend?'…':dev?'(test mode)':`+${g.rw} 🥕`,W/2,H/2+25)}}
+ if(joy&&st==='play'){ctx.globalAlpha=.3;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(joy.ox,joy.oy,60,0,6.28);ctx.fill();const dx=joy.x-joy.ox,dy=joy.y-joy.oy,d=Math.hypot(dx,dy)||1,k=Math.min(1,60/d);ctx.globalAlpha=.6;ctx.beginPath();ctx.arc(joy.ox+dx*k,joy.oy+dy*k,26,0,6.28);ctx.fill();ctx.globalAlpha=1}
  for(const p of parts){ctx.globalAlpha=Math.max(0,p.l*2);ctx.fillStyle=p.c;ctx.fillRect(p.x,p.y,4,4)}ctx.globalAlpha=1;ctx.restore()}
 
 function loop(t){const dt=Math.min(.05,(t-last)/1000||0);last=t;
