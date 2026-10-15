@@ -192,7 +192,7 @@ export function customArt(c) {
 /** One layer of the character (hat, glasses...). Same 10-frame sheet as the rabbit. Returns null until loaded / if the file is missing. */
 export function partArt(cat, name, color = null) {
   const base = BY_KEY["room-rabbit"];
-  return name ? art(null, 0, { ...base, key: `part-${cat}-${name}`, file: `assets/room/rabbit/${cat}/${name}.png` }, name.startsWith("fix-") ? null : color) : null;
+  return name ? art(null, 0, { ...base, key: `part-${cat}-${name}`, file: `assets/room/rabbit/${cat}/${name}.png` }, /^fix/.test(name) ? null : color) : null;
 }
 /** Time-based looping frame. */
 export const animFrame = (spec, t, ph = 0) => Math.floor(t * (spec.fps || 8) + ph * 2);
